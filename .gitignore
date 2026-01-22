@@ -1,0 +1,13 @@
+# Secrets
+.env
+
+# Local Data (Do not upload student private data)
+students_data.json
+student_docs/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# System
+.DS_Store
