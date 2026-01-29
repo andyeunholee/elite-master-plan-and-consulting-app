@@ -267,15 +267,20 @@ def main():
 
         if st.button("💾 Save Profile (Includes Files)"):
             if student_name:
-                # Save Files First
-                saved_paths = []
+                # Save & Merge Files
+                data = load_data() # Load latest data
+                existing_files = []
+                
+                # Check if we are updating an existing student (by name match)
+                if student_name in data:
+                     existing_files = data[student_name].get("files", [])
+                
+                new_files = []
                 if uploaded_files:
-                    saved_paths = save_uploaded_files(student_name, uploaded_files)
-                elif selected_student_key != "Create New (신규)":
-                    # Keep existing files if no new upload
-                    saved_paths = saved_data.get(student_name, {}).get("files", [])
-
-                data = load_data()
+                    new_files = save_uploaded_files(student_name, uploaded_files)
+                
+                # Combine and remove duplicates while preserving order
+                saved_paths = list(dict.fromkeys(existing_files + new_files))
                 data[student_name] = {
                     "grade": student_grade,
                     "target": target_university,
@@ -289,23 +294,39 @@ def main():
             else:
                 st.error("Please enter specific student name.")
         
-        # Delete Profile Option
-        if selected_student_key != "Create New (신규)":
-            st.markdown("---")
-            if st.button("🗑️ Delete Profile (학생 삭제)", type="secondary"):
-                if delete_data(selected_student_key):
-                    st.success(f"Deleted '{selected_student_key}' successfully.")
-                    time.sleep(1) # Give time to show message
-                    st.rerun() # Refresh to update list
-                else:
-                    st.error("Failed to delete.")
+        # Delete Profile Option - REMOVED as per user request (Manual deletion only)
+        # if selected_student_key != "Create New (신규)":
+        #    ... (Code removed for safety)
 
     # Main Area Tabs
-    tab1, tab2 = st.tabs(["📊 US Master Plan Generator", "💬 US Admissions Chatbot"])
+    tab1, tab2, tab3 = st.tabs(["📊 US Master Plan Generator", "💬 US Admissions Chatbot", "📧 Monthly Automated Email System"])
 
     # --- Tab 1: Master Plan Generator (Gemini 3 Pro) ---
     with tab1:
         st.subheader(f"🚀 Master Plan for {student_name if student_name else 'Student'}")
+        
+        # Prepare Analysis Files (Consolidated)
+        available_files = {}
+        # 1. Saved Files
+        if selected_student_key == student_name:
+             for f_path in saved_data.get(student_name, {}).get("files", []):
+                  available_files[f"[Saved] {os.path.basename(f_path)}"] = f_path
+        # 2. Uploaded Files
+        if uploaded_files:
+             for f in uploaded_files:
+                  available_files[f"[New] {f.name}"] = f
+        
+        selected_filenames = []
+        if available_files:
+            with st.expander("📂 Select Documents for Analysis (분석할 파일 선택)", expanded=True):
+                 st.write("Check the files you want to use:")
+                 for fname in available_files.keys():
+                     # Default to True (Checked)
+                     if st.checkbox(fname, value=True, key=f"mp_{fname}"):
+                         selected_filenames.append(fname)
+        else:
+             st.info("No documents available. Generating plan based on profile text only.")
+
         
         if st.button("✨ Generate Master Plan", type="primary"):
             if not student_name or not current_status:
@@ -344,53 +365,59 @@ def main():
                         
                         files_to_process = []
                         
-                        # Priority 1: Newly Uploaded Files
-                        if uploaded_files:
-                            for file in uploaded_files:
-                                # Check for docx
-                                if file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" or file.name.endswith(".docx"):
-                                    extracted_text = extract_text_from_docx(file)
-                                    if extracted_text:
-                                        content_parts.append(f"\\n[Attached Document Content: {file.name}]\\n{extracted_text}\\n")
+                        # File Selection Logic
+                        files_to_process = []
+                        
+                        # Process selected files
+                        if selected_filenames:
+                            for fname in selected_filenames:
+                                file_source = available_files[fname]
+                                
+                                # Case A: UploadedFile object
+                                if hasattr(file_source, "type"): 
+                                    file = file_source
+                                    if file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" or file.name.endswith(".docx"):
+                                        extracted_text = extract_text_from_docx(file)
+                                        if extracted_text:
+                                            content_parts.append(f"\\n[Attached Document Content: {file.name}]\\n{extracted_text}\\n")
+                                    else:
+                                        files_to_process.append({
+                                            "name": file.name,
+                                            "mime_type": file.type,
+                                            "data": file.getvalue()
+                                        })
+                                # Case B: File Path (Saved file)
                                 else:
-                                    files_to_process.append({
-                                        "name": file.name,
-                                        "mime_type": file.type,
-                                        "data": file.getvalue()
-                                    })
-                        # Priority 2: Saved Files (if no new upload)
-                        elif selected_student_key == student_name: # Ensure we are looking at the right student
-                             saved_files = saved_data.get(student_name, {}).get("files", [])
-                             if saved_files:
-                                 st.info(f"📂 Analyzing {len(saved_files)} saved documents...")
-                                 for file_path in saved_files:
-                                     if os.path.exists(file_path):
-                                         # Simple mime guess based on extension
-                                         ext = os.path.splitext(file_path)[1].lower()
-                                         mime_type = "application/pdf" # Default fallback
-                                         
-                                         if ext == ".docx":
-                                             with open(file_path, "rb") as f:
-                                                 extracted_text = extract_text_from_docx(f)
-                                                 if extracted_text:
-                                                      content_parts.append(f"\\n[Attached Document Content: {os.path.basename(file_path)}]\\n{extracted_text}\\n")
-                                             continue # Skip adding to files_to_process as binary
-
-                                         if ext == ".pdf": mime_type = "application/pdf"
-                                         elif ext in [".jpg", ".jpeg"]: mime_type = "image/jpeg"
-                                         elif ext == ".png": mime_type = "image/png"
-                                         elif ext == ".doc": mime_type = "application/msword"
-                                         elif ext == ".xlsx": mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                                         elif ext == ".xls": mime_type = "application/vnd.ms-excel"
-                                         elif ext == ".csv": mime_type = "text/csv"
-                                         elif ext == ".txt": mime_type = "text/plain"
-                                         
-                                         with open(file_path, "rb") as f:
-                                             files_to_process.append({
-                                                "name": os.path.basename(file_path),
-                                                "mime_type": mime_type,
-                                                "data": f.read()
-                                             })
+                                    file_path = file_source
+                                    if os.path.exists(file_path):
+                                        ext = os.path.splitext(file_path)[1].lower()
+                                        mime_type = "application/pdf"
+                                        
+                                        if ext == ".docx":
+                                            with open(file_path, "rb") as f:
+                                                extracted_text = extract_text_from_docx(f)
+                                                if extracted_text:
+                                                     content_parts.append(f"\\n[Attached Document Content: {os.path.basename(file_path)}]\\n{extracted_text}\\n")
+                                            continue 
+                                        
+                                        if ext == ".pdf": mime_type = "application/pdf"
+                                        elif ext in [".jpg", ".jpeg"]: mime_type = "image/jpeg"
+                                        elif ext == ".png": mime_type = "image/png"
+                                        elif ext == ".doc": mime_type = "application/msword"
+                                        elif ext == ".xlsx": mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                        elif ext == ".xls": mime_type = "application/vnd.ms-excel"
+                                        elif ext == ".csv": mime_type = "text/csv"
+                                        elif ext == ".txt": mime_type = "text/plain"
+                                        
+                                        try:
+                                            with open(file_path, "rb") as f:
+                                                files_to_process.append({
+                                                    "name": os.path.basename(file_path),
+                                                    "mime_type": mime_type,
+                                                    "data": f.read()
+                                                })
+                                        except Exception as e:
+                                            print(f"Error reading file {file_path}: {e}")
 
                         if files_to_process:
                             for f_obj in files_to_process:
@@ -398,8 +425,8 @@ def main():
                                     "mime_type": f_obj["mime_type"],
                                     "data": f_obj["data"]
                                 })
-                        elif not uploaded_files: # Warning only if really no files found anywhere
-                             st.warning("No documents found. Analyzing based on text only.")
+                        elif not selected_filenames: 
+                             st.warning("No documents selected. Analyzing based on text only.")
 
                         model = genai.GenerativeModel(MODEL_PRO) # Using requested 3-pro
                         # Note: In a real scenario with "gemini-3-pro" available, we'd swap the string.
@@ -415,7 +442,11 @@ def main():
                         
                         response = model.generate_content(content_parts)
                         
-                        st.markdown(response.text)
+                        # Clean up common hallucinated tags if necessary, but enabling HTML usually fixes standard <br>
+                        # Replacing <br-> just in case it's a model artifact
+                        cleaned_text = response.text.replace("<br->", "<br>- ")
+                        
+                        st.markdown(cleaned_text, unsafe_allow_html=True)
                         
                         # Save result locally for record
                         # (Optional implementation detail)
@@ -426,8 +457,25 @@ def main():
 
     # --- Tab 2: Consulting Chatbot (Gemini 3 Flash) ---
     with tab2:
-        st.subheader("💬 US Admissions Chatbot")
+        st.subheader(f"💬 US Admissions Chatbot for {student_name if student_name else 'Student'}")
         st.caption("⚡ Powered by Gemini-3-Flash")
+        
+        # Chat File Selection
+        available_files_chat = {}
+        if selected_student_key == student_name:
+             for f_path in saved_data.get(student_name, {}).get("files", []):
+                  available_files_chat[f"[Saved] {os.path.basename(f_path)}"] = f_path
+        if uploaded_files:
+             for f in uploaded_files:
+                  available_files_chat[f"[New] {f.name}"] = f
+        
+        selected_filenames_chat = []
+        if available_files_chat:
+             with st.expander("📂 Context Documents (대화에 참고할 파일 설정)", expanded=False):
+                 st.write("Select files for chatbot context:")
+                 for fname in available_files_chat.keys():
+                     if st.checkbox(fname, value=True, key=f"chat_{fname}"):
+                         selected_filenames_chat.append(fname)
         
         # Chat History
         if "messages" not in st.session_state:
@@ -470,10 +518,26 @@ def main():
                     chat_context_parts.append(system_text)
 
                     # Add Saved Files to Context
-                    if selected_student_key == student_name:
-                         saved_files = saved_data.get(student_name, {}).get("files", [])
-                         if saved_files:
-                             for file_path in saved_files:
+                    if selected_filenames_chat:
+                        for fname in selected_filenames_chat:
+                             file_source = available_files_chat[fname]
+                             
+                             # Case A: UploadedFile object
+                             if hasattr(file_source, "type"):
+                                 file = file_source
+                                 if file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" or file.name.endswith(".docx"):
+                                     extracted_text = extract_text_from_docx(file)
+                                     if extracted_text:
+                                         chat_context_parts.append(f"\\n[Attached Document Content: {file.name}]\\n{extracted_text}\\n")
+                                 else:
+                                     chat_context_parts.append({
+                                         "mime_type": file.type,
+                                         "data": file.getvalue()
+                                     })
+
+                             # Case B: File Path (Saved file)
+                             else:
+                                 file_path = file_source
                                  if os.path.exists(file_path):
                                      ext = os.path.splitext(file_path)[1].lower()
                                      mime_type = "application/pdf"
@@ -485,7 +549,7 @@ def main():
                                                      chat_context_parts.append(f"\\n[Attached Document Content: {os.path.basename(file_path)}]\\n{extracted_text}\\n")
                                          except Exception as e:
                                              print(f"Error reading docx {file_path}: {e}")
-                                         continue # Skip binary append
+                                         continue 
 
                                      if ext == ".pdf": mime_type = "application/pdf"
                                      elif ext in [".jpg", ".jpeg"]: mime_type = "image/jpeg"
@@ -532,6 +596,194 @@ def main():
                     
                 except Exception as e:
                     st.error(f"Error: {e}")
+    with tab3:
+        st.subheader("📧 Automated Monthly Newsletter (General Monthly Master Plan)")
+        st.caption("Manage subscribers and send monthly guides.")
+        
+        # 1. Subscriber Management
+        st.write("### 👥 Subscribers (구독자 관리)")
+        
+        # Load Subscribers
+        import newsletter_utils
+        subscribers = newsletter_utils.load_subscribers()
+        
+        col_sub1, col_sub2 = st.columns([3, 1])
+        with col_sub1:
+            new_emails_input = st.text_area("Add Email Address(es)", placeholder="Paste list of emails here (one per line, or comma separated)", height=100)
+        with col_sub2:
+            st.write("")
+            st.write("")
+            if st.button("Add (+)", type="secondary"):
+                if new_emails_input:
+                    # Parse inputs (split by newline or comma)
+                    raw_list = new_emails_input.replace(',', '\n').split('\n')
+                    valid_emails = []
+                    for e in raw_list:
+                        e = e.strip()
+                        if "@" in e:
+                            valid_emails.append(e)
+                    
+                    if valid_emails:
+                        added = newsletter_utils.save_subscribers(valid_emails)
+                        if added > 0:
+                            st.success(f"Successfully added {added} new subscribers!")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.warning("All valid emails already exist.")
+                    else:
+                        st.error("No valid emails found in input.")
+                else:
+                    st.warning("Please enter emails.")
+        
+        if subscribers:
+            st.dataframe(pd.DataFrame({"Subscribers": subscribers}), hide_index=True)
+            
+            # Remove Option (Bulk)
+            emails_to_remove = st.multiselect("Select Subscribers to Remove", subscribers)
+            
+            col_rem1, col_rem2 = st.columns([1, 1])
+            with col_rem1:
+                if st.button("🗑️ Remove Selected"):
+                    if emails_to_remove:
+                        newsletter_utils.remove_subscribers(emails_to_remove)
+                        st.success(f"Removed {len(emails_to_remove)} subscribers.")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.warning("Select valid emails to remove.")
+            
+            with col_rem2:
+                if st.button("⚠️ Remove ALL Subscribers", type="primary"):
+                    newsletter_utils.remove_subscribers(subscribers)
+                    st.success("All subscribers removed.")
+                    time.sleep(1)
+                    st.rerun()
+
+        else:
+            st.info("No subscribers yet. Add one above!")
+            
+        st.divider()
+        
+        # 2. Email Configuration
+        st.write("### ⚙️ Sender Configuration (발신자 설정)")
+        st.info("Gmail 'App Password' is required for automation.")
+        
+        col_conf1, col_conf2 = st.columns(2)
+        with col_conf1:
+            # We don't save this to file for security in this simple demo, 
+            # we rely on .env or session state. 
+            # Ideally, user sets this in .env manually.
+            current_sender = os.getenv("SENDER_EMAIL", "")
+            st.text_input("Sender Email (From .env)", value=current_sender, disabled=True)
+        
+        with col_conf2:
+             is_password_set = bool(os.getenv("SENDER_PASSWORD"))
+             st.text_input("App Password Status", value="✅ Set in .env" if is_password_set else "❌ Not Set", disabled=True)
+        
+        st.divider()
+        
+        # 3. Preview & Test
+        st.write("### 📢 Content Preview & Test (미리보기 및 발송)")
+        
+        preview_grade = st.selectbox("Select Grade for Preview", ["9th Grade", "10th Grade", "11th Grade", "12th Grade"])
+        
+        if st.button("👁️ Generate Preview for This Month"):
+            current_month = datetime.now().strftime("%B")
+            with st.spinner(f"Generating optimized plan for {preview_grade} ({current_month})..."):
+                preview_content = newsletter_utils.generate_monthly_plan(api_key, preview_grade, current_month)
+                st.markdown(preview_content)
+                st.session_state['last_preview'] = preview_content
+        
+        st.write("")
+        st.write("---")
+        st.subheader("🚀 Bulk Email Sender (대량 발송)")
+        
+        # Step 1: Generate Draft
+        if st.button("📝 STAGE 1: Generate Draft for Review (내용 생성 및 확인)"):
+            with st.spinner("Generating content for all grades... (This may take ~30 seconds)"):
+                try:
+                    # Current logic to generate content
+                    current_month = datetime.now().strftime("%B")
+                    full_body = f"# Elite Prep – {current_month} Academic Master Plan\n\n"
+                    
+                    grades = ["9th Grade", "10th Grade", "11th Grade", "12th Grade"]
+                    progress_bar = st.progress(0)
+                    
+                    for i, grade in enumerate(grades):
+                        content = newsletter_utils.generate_monthly_plan(api_key, grade, current_month)
+                        full_body += f"## 📌 {grade}\n{content}\n\n---\n\n"
+                        progress_bar.progress((i + 1) / len(grades))
+                    
+                    # Append Footer Signature
+                    full_body += """
+Sent by Elite Prep Master Plan & Academic Consulting
+
+Andy Lee  | Branch Director <br>
+Elite Prep Suwanee powered by Elite Open School <br>
+1291 Old Peachtree Rd. NW #127, Suwanee, GA 30024 <br>
+Tel & Text: 470.253.1004
+"""
+                    
+                    # Store in session state
+                    st.session_state['draft_email_content'] = full_body
+                    st.session_state['draft_month'] = current_month
+                    st.success("Draft Generated! Please review below.")
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"Error generating draft: {e}")
+
+        # Step 2: Review & Send
+        if 'draft_email_content' in st.session_state:
+            st.write("### 📝 Review & Edit Draft (내용 확인 및 수정)")
+            st.info("아래 내용을 확인하고 필요하면 직접 수정하세요. 수정된 내용 그대로 발송됩니다.")
+            
+            # Editable Text Area
+            edited_body = st.text_area("Email Content", value=st.session_state['draft_email_content'], height=400)
+            
+            # Update session state if edited
+            if edited_body != st.session_state['draft_email_content']:
+                st.session_state['draft_email_content'] = edited_body
+
+            col_send1, col_send2 = st.columns([1, 1])
+            with col_send1:
+                if st.button("🚀 STAGE 2: Send to ALL Subscribers (최종 발송)", type="primary"):
+                    sender = os.getenv("SENDER_EMAIL")
+                    pwd = os.getenv("SENDER_PASSWORD")
+                    
+                    if not sender or not pwd:
+                        st.error("Please set SENDER_EMAIL and SENDER_PASSWORD in .env file first.")
+                    elif not subscribers:
+                        st.error("No subscribers to send to.")
+                    else:
+                        with st.status("Sending Emails...", expanded=True) as status:
+                            current_month = st.session_state.get('draft_month', datetime.now().strftime("%B"))
+                            
+                            success, msg = newsletter_utils.send_email(
+                                sender, 
+                                pwd, 
+                                subscribers, 
+                                f"[{current_month}] Monthly Academic Master Plan", 
+                                st.session_state['draft_email_content'] # Use the (potentially edited) content
+                            )
+                            
+                            if success:
+                                status.update(label="✅ Newsletter Sent Successfully!", state="complete", expanded=False)
+                                st.success(msg)
+                                # Clear draft after successful send
+                                del st.session_state['draft_email_content']
+                                time.sleep(2)
+                                st.rerun()
+                            else:
+                                status.update(label="❌ Failed", state="error")
+                                st.error(msg)
+            
+            with col_send2:
+                 if st.button("🗑️ Discard Draft (초안 삭제)"):
+                    del st.session_state['draft_email_content']
+                    st.rerun()
 
 if __name__ == "__main__":
     main()
+
