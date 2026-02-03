@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 import newsletter_utils
 
 # Load environment variables
-load_dotenv()
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'), override=True)
 
 def main():
     print("--- 📧 Automated Newsletter Sender Started ---")

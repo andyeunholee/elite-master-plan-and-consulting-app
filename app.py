@@ -7,7 +7,10 @@ from dotenv import load_dotenv
 from PIL import Image
 
 # Load environment variables
-load_dotenv()
+# Load environment variables
+import os
+env_path = os.path.join(os.path.dirname(__file__), '.env')
+load_dotenv(dotenv_path=env_path, override=True)
 import time
 from datetime import datetime
 import base64
@@ -749,11 +752,15 @@ Tel & Text: 470.253.1004
             col_send1, col_send2 = st.columns([1, 1])
             with col_send1:
                 if st.button("🚀 STAGE 2: Send to ALL Subscribers (최종 발송)", type="primary"):
+                    # Force reload env to get latest credentials (absolute path)
+                    env_path = os.path.join(os.path.dirname(__file__), '.env')
+                    load_dotenv(dotenv_path=env_path, override=True)
                     sender = os.getenv("SENDER_EMAIL")
                     pwd = os.getenv("SENDER_PASSWORD")
                     
                     if not sender or not pwd:
                         st.error("Please set SENDER_EMAIL and SENDER_PASSWORD in .env file first.")
+
                     elif not subscribers:
                         st.error("No subscribers to send to.")
                     else:
