@@ -30,8 +30,8 @@ st.set_page_config(
 # Constants
 DATA_FILE = "students_data.json"
 DOCS_DIR = "student_docs" # Directory to save files
-MODEL_PRO = "gemini-3-pro-preview"   # Available v3 Preview model
-MODEL_FLASH = "gemini-3-flash-preview" # Available v3 Flash Preview model
+MODEL_PRO = "gemini-pro-latest"     # Auto-points to current Pro model (avoids deprecation 404s)
+MODEL_FLASH = "gemini-flash-latest" # Auto-points to current Flash model
 
 # --- Utility Functions ---
 def load_data():
@@ -46,6 +46,15 @@ def load_data():
 def save_data(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
+
+def get_env_or_secret(key, default=""):
+    try:
+        val = st.secrets.get(key)
+        if val:
+            return val
+    except Exception:
+        pass
+    return os.getenv(key, default)
 
 def init_gemini(api_key):
     if api_key:
@@ -201,8 +210,8 @@ def main():
     with st.sidebar:
         st.header("⚙️ 설정 (Settings)")
         
-        # Load from env
-        api_key = os.getenv("GOOGLE_API_KEY")
+        # Load from env or secrets
+        api_key = get_env_or_secret("GOOGLE_API_KEY")
         
         # Fallback to input if not in env
         if not api_key:
@@ -677,12 +686,12 @@ def main():
             # We don't save this to file for security in this simple demo, 
             # we rely on .env or session state. 
             # Ideally, user sets this in .env manually.
-            current_sender = os.getenv("SENDER_EMAIL", "")
-            st.text_input("Sender Email (From .env)", value=current_sender, disabled=True)
+            current_sender = get_env_or_secret("SENDER_EMAIL", "")
+            st.text_input("Sender Email (From .env or Secrets)", value=current_sender, disabled=True)
         
         with col_conf2:
-             is_password_set = bool(os.getenv("SENDER_PASSWORD"))
-             st.text_input("App Password Status", value="✅ Set in .env" if is_password_set else "❌ Not Set", disabled=True)
+             is_password_set = bool(get_env_or_secret("SENDER_PASSWORD"))
+             st.text_input("App Password Status", value="✅ Set" if is_password_set else "❌ Not Set", disabled=True)
         
         st.divider()
         
@@ -754,12 +763,14 @@ Tel & Text: 470.253.1004
                 if st.button("🚀 STAGE 2: Send to ALL Subscribers (최종 발송)", type="primary"):
                     # Force reload env to get latest credentials (absolute path)
                     env_path = os.path.join(os.path.dirname(__file__), '.env')
-                    load_dotenv(dotenv_path=env_path, override=True)
-                    sender = os.getenv("SENDER_EMAIL")
-                    pwd = os.getenv("SENDER_PASSWORD")
+                    if os.path.exists(env_path):
+                        load_dotenv(dotenv_path=env_path, override=True)
+                    
+                    sender = get_env_or_secret("SENDER_EMAIL")
+                    pwd = get_env_or_secret("SENDER_PASSWORD")
                     
                     if not sender or not pwd:
-                        st.error("Please set SENDER_EMAIL and SENDER_PASSWORD in .env file first.")
+                        st.error("Please set SENDER_EMAIL and SENDER_PASSWORD in .env file (local) or Streamlit Secrets (cloud) first.")
 
                     elif not subscribers:
                         st.error("No subscribers to send to.")
