@@ -3,7 +3,6 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import google.generativeai as genai
-import pandas as pd
 from datetime import datetime
 import markdown
 import base64
@@ -14,6 +13,7 @@ def load_subscribers():
     if not os.path.exists(SUBSCRIBERS_FILE):
         return []
     try:
+        import pandas as pd
         df = pd.read_csv(SUBSCRIBERS_FILE)
         # Ensure all are strings and strip whitespace
         return [str(e).strip() for e in df['email'].tolist() if pd.notna(e)]
@@ -33,6 +33,7 @@ def save_subscribers(email_list):
             added_count += 1
             
     if added_count > 0:
+        import pandas as pd
         df = pd.DataFrame({'email': current_emails})
         df.to_csv(SUBSCRIBERS_FILE, index=False)
     return added_count
@@ -49,6 +50,7 @@ def remove_subscribers(email_list):
     new_emails = [e for e in current_emails if e not in targets]
     
     if len(new_emails) != len(current_emails):
+        import pandas as pd
         df = pd.DataFrame({'email': new_emails})
         df.to_csv(SUBSCRIBERS_FILE, index=False)
         return True
