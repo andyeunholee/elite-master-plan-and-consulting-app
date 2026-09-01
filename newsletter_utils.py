@@ -85,6 +85,78 @@ def generate_monthly_plan(api_key, grade, month_name):
     except Exception as e:
         return f"Error generating content: {e}"
 
+LOGO_CID = "logo_image"
+
+
+def load_logo_bytes(base_width=75):
+    """logo.png 를 base_width 픽셀로 줄여 바이트로 돌려준다. 없으면 None."""
+    if not os.path.exists("logo.png"):
+        return None
+    try:
+        import io
+
+        from PIL import Image
+        with open("logo.png", "rb") as f:
+            raw_data = f.read()
+        try:
+            with Image.open(io.BytesIO(raw_data)) as img:
+                w_percent = base_width / float(img.size[0])
+                h_size = int(float(img.size[1]) * w_percent)
+                img = img.resize((base_width, h_size), Image.Resampling.LANCZOS)
+                byte_io = io.BytesIO()
+                img.save(byte_io, 'PNG')
+                return byte_io.getvalue()
+        except Exception as resize_err:
+            print(f"Resize failed, using original: {resize_err}")
+            return raw_data
+    except Exception as e:
+        print(f"Error processing logo: {e}")
+        return None
+
+
+def wrap_html(body_markdown, has_logo):
+    """마크다운 본문을 이메일용 HTML 문서로 감싼다."""
+    html_content = markdown.markdown(body_markdown)
+    logo_html = (
+        f'<div style="text-align: center; margin-bottom: 20px;">'
+        f'<img src="cid:{LOGO_CID}" alt="Elite Prep Logo" style="max-width: 75px;">'
+        f'</div>'
+    ) if has_logo else ""
+    return f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+                {logo_html}
+                {html_content}
+                <hr style="margin-top: 30px; border: 0; border-top: 1px solid #eee;">
+            </div>
+        </body>
+        </html>
+        """
+
+
+def build_message(sender_email, recipient, subject, body_markdown, img_data):
+    """수신자 한 명에게 보낼 MIME 메시지를 만든다 (로고는 인라인 첨부)."""
+    from email.mime.image import MIMEImage
+
+    msg = MIMEMultipart("related")
+    msg["From"] = sender_email
+    msg["To"] = recipient
+    msg["Subject"] = subject
+
+    alt = MIMEMultipart("alternative")
+    msg.attach(alt)
+    alt.attach(MIMEText(body_markdown, "plain"))
+    alt.attach(MIMEText(wrap_html(body_markdown, bool(img_data)), "html"))
+
+    if img_data:
+        img = MIMEImage(img_data)
+        img.add_header('Content-ID', f'<{LOGO_CID}>')
+        img.add_header('Content-Disposition', 'inline', filename="logo.png")
+        msg.attach(img)
+    return msg
+
+
 def send_email(sender_email, sender_password, recipients, subject, body_markdown):
     # Force reload environment variables to get the latest password
     from dotenv import load_dotenv
@@ -102,84 +174,17 @@ def send_email(sender_email, sender_password, recipients, subject, body_markdown
         server.starttls()
         server.login(sender_email, sender_password)
 
-        # Convert Markdown to HTML for Email
-        html_content = markdown.markdown(body_markdown)
-        
-        # Determine Logo HTML with CID/Resize Logic
-        # We process the logo ONCE, then attach readability to each email
-        logo_cid = "logo_image"
-        has_logo = False
-        img_data = None
-        
-        if os.path.exists("logo.png"):
-            has_logo = True
-            try:
-                from PIL import Image
-                import io
-                with open("logo.png", "rb") as f:
-                    raw_data = f.read()
-                    try:
-                         with Image.open(io.BytesIO(raw_data)) as img:
-                            base_width = 75 # REDUCED TO 75px AS REQUESTED
-                            w_percent = (base_width / float(img.size[0]))
-                            h_size = int((float(img.size[1]) * float(w_percent)))
-                            img = img.resize((base_width, h_size), Image.Resampling.LANCZOS)
-                            
-                            byte_io = io.BytesIO()
-                            img.save(byte_io, 'PNG')
-                            img_data = byte_io.getvalue()
-                    except Exception as resize_err:
-                        print(f"Resize failed, using original: {resize_err}")
-                        img_data = raw_data
-            except Exception as e:
-                print(f"Error processing logo: {e}")
-                has_logo = False
-
-        # Logo HTML for body
-        if has_logo:
-             logo_html = f'<div style="text-align: center; margin-bottom: 20px;"><img src="cid:{logo_cid}" alt="Elite Prep Logo" style="max-width: 75px;"></div>'
-        else:
-             logo_html = ""
-
-        # Construct Full HTML Body
-        full_html_template = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                {logo_html}
-                {html_content}
-                <hr style="margin-top: 30px; border: 0; border-top: 1px solid #eee;">
-            </div>
-        </body>
-        </html>
-        """
+        # 로고는 한 번만 처리해서 모든 메일에 인라인 첨부한다
+        img_data = load_logo_bytes()
 
         # LOOP THROUGH RECIPIENTS AND SEND INDIVIDUALLY
         sent_count = 0
         failed_recipients = []
-        
-        from email.mime.image import MIMEImage
 
         for recipient in recipients:
             try:
-                msg = MIMEMultipart("related")
-                msg["From"] = sender_email
-                msg["To"] = recipient # Individual To
-                msg["Subject"] = subject
-                
-                msg_alternative = MIMEMultipart("alternative")
-                msg.attach(msg_alternative)
-                
-                msg_alternative.attach(MIMEText(body_markdown, "plain"))
-                msg_alternative.attach(MIMEText(full_html_template, "html"))
-                
-                # Attach Logo if exists
-                if has_logo and img_data:
-                    img_attachment = MIMEImage(img_data)
-                    img_attachment.add_header('Content-ID', f'<{logo_cid}>')
-                    img_attachment.add_header('Content-Disposition', 'inline', filename="logo.png")
-                    msg.attach(img_attachment)
-                
+                msg = build_message(sender_email, recipient, subject,
+                                    body_markdown, img_data)
                 server.sendmail(sender_email, recipient, msg.as_string())
                 sent_count += 1
             except Exception as e:

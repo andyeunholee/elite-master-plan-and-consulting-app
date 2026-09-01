@@ -1,0 +1,47 @@
+name: SRDB 클라우드 로그인 실험
+
+# 실험용. 예약 실행 없음 — Actions 탭에서 직접 눌러야만 돈다.
+#
+# 알아내려는 것: GitHub 서버에서도 SRDB 로그인이 되는가?
+#   된다  → 명단 갱신도 클라우드로 옮겨 랩탑이 완전히 필요 없어진다.
+#   안 된다 → 지금처럼 랩탑에서 명단을 갱신한다 (발송은 어차피 클라우드).
+#
+# 명단이나 발송에는 아무 영향이 없다. 로그인만 한 번 해보고 끝난다.
+# 계정 잠김을 피하려고 시도는 실행당 딱 한 번이다.
+#
+# 필요한 시크릿: SRDB_EMAIL, SRDB_PASSWORD
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Playwright 설치
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+          sudo apt-get install -y xvfb
+
+      - name: 로그인 시도
+        env:
+          SRDB_EMAIL: ${{ secrets.SRDB_EMAIL }}
+          SRDB_PASSWORD: ${{ secrets.SRDB_PASSWORD }}
+        # 헤드리스가 아니라 가상 화면 위의 진짜 창으로 띄우는 것이 이 실험의 핵심이다.
+        run: xvfb-run -a --server-args="-screen 0 1400x900x24" python tools/srdb_cloud_probe.py
+
+      - name: 스크린샷 저장
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: srdb-probe-screenshots
+          path: probe-artifacts/
+          if-no-files-found: ignore

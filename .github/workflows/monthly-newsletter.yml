@@ -1,0 +1,95 @@
+name: Monthly Parent Newsletter
+
+# 매달 1일 오전 7시(미동부)에 학부모께 월간 마스터플랜을 보낸다.
+#
+# GitHub cron 은 UTC 만 쓴다. 미동부는 서머타임 때문에 오전 7시가
+#   여름(EDT, UTC-4) → 11:00 UTC
+#   겨울(EST, UTC-5) → 12:00 UTC
+# 로 갈린다. 그래서 두 시각 모두 예약해 두고, 실제로 지금이 어느 쪽인지 확인해
+# 맞는 쪽만 발송한다 (github.event.schedule 로 어느 cron 이 깨웠는지 알 수 있다).
+# 이렇게 하면 두 번 보내는 일도, 한 달을 통째로 건너뛰는 일도 없다.
+
+on:
+  schedule:
+    - cron: "0 11 1 * *"   # 07:00 EDT (3월~11월)
+    - cron: "0 12 1 * *"   # 07:00 EST (11월~3월)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "실행 방식"
+        required: true
+        default: test
+        type: choice
+        options: [test, dry-run, send]
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    # 발송 기록을 커밋하기 위해 쓰기 권한이 필요하다 (아래 "실행 기록 커밋" 참고)
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 지금이 미동부 오전 7시가 맞는지 확인
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "수동 실행 — 그대로 진행합니다."
+            echo "go=yes" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          OFFSET=$(TZ=America/New_York date +%z)     # -0400(EDT) 또는 -0500(EST)
+          FIRED='${{ github.event.schedule }}'
+          echo "미동부 현재시각: $(TZ=America/New_York date '+%Y-%m-%d %H:%M %Z') (offset $OFFSET)"
+          echo "깨운 cron: $FIRED"
+          if { [ "$OFFSET" = "-0400" ] && [ "$FIRED" = "0 11 1 * *" ]; } || \
+             { [ "$OFFSET" = "-0500" ] && [ "$FIRED" = "0 12 1 * *" ]; }; then
+            echo "go=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "이번 cron 은 지금 시기와 맞지 않습니다 — 건너뜁니다."
+            echo "go=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.go == 'yes'
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 의존성 설치
+        if: steps.gate.outputs.go == 'yes'
+        run: pip install -r requirements-newsletter.txt
+
+      - name: 발송
+        if: steps.gate.outputs.go == 'yes'
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+          SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          ROSTER_SHEET_KEY: ${{ secrets.ROSTER_SHEET_KEY }}
+          TEST_RECIPIENT: ${{ secrets.TEST_RECIPIENT }}
+          SENT_LOG: sent_log.md
+        run: |
+          MODE="${{ github.event.inputs.mode }}"
+          case "$MODE" in
+            test)     python newsletter_send.py --test ;;
+            dry-run)  python newsletter_send.py --dry-run ;;
+            *)        python newsletter_send.py ;;
+          esac
+
+      # 공개 레포는 60일간 활동이 없으면 GitHub 이 예약 실행을 자동으로 끈다.
+      # 매달 기록을 한 줄 커밋해 두면 그 타이머가 계속 초기화된다.
+      - name: 실행 기록 커밋
+        if: always() && steps.gate.outputs.go == 'yes'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add sent_log.md
+          if git diff --staged --quiet; then
+            echo "기록할 내용이 없습니다 (드라이런이거나 발송 전에 실패)."
+          else
+            git commit -m "뉴스레터 발송 기록 $(TZ=America/New_York date '+%Y-%m')"
+            git push
+          fi

@@ -1,0 +1,6 @@
+google-generativeai
+gspread
+google-auth
+Pillow
+markdown
+python-dotenv

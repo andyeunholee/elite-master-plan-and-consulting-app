@@ -11,3 +11,12 @@ __pycache__/
 
 # System
 .DS_Store
+
+# Service account keys (never commit — this repo is public)
+*service-account*.json
+*-????????????.json
+claude-code-*.json
+newsletter-bot*.json
+
+# 실험 산출물
+probe-artifacts/
