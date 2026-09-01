@@ -317,8 +317,11 @@ def generate(api_key, grade, month, year):
 def subject_for(grades, month, year):
     if len(grades) == len(ALL_GRADES):
         en, ko = "Grades 9-12", "9~12학년"
+    elif len(grades) == 1:
+        en = f"{ORDINAL[grades[0]]} Grade"
+        ko = f"{grades[0]}학년"
     else:
-        en = " & ".join(ORDINAL[g] for g in grades)
+        en = " & ".join(ORDINAL[g] for g in grades) + " Grades"
         ko = "·".join(str(g) for g in grades) + "학년"
     return f"[{month} {year}] Monthly Academic Master Plan — {en} | {ko} 월간 마스터플랜"
 
